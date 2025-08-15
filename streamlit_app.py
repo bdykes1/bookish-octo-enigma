@@ -43,8 +43,8 @@ def parse_menu(json_data):
 
             category = item.get("category", "")
 
-            # Match the categories exactly as listed on Nutrislice
-            if category in ["Main Entree Choices", "Alternate Entree Choices"]:
+            # Case-insensitive check for entrees
+            if "main entree" in category.lower() or "alternate entree" in category.lower():
                 entrees.append(food["name"])
             else:
                 sides.append(food["name"])
@@ -84,13 +84,14 @@ if "all_users" not in st.session_state:
     st.session_state.all_users = {}
 
 if username:
-    st.subheader(f"Lunch selections for {username}")
+    st.subheader(f"**Lunch selections for {username}**")
     selections = {}
     for date_str, meal_data in meals_by_day.items():
         weekday = datetime.fromisoformat(date_str).strftime("%A %b %d")
+        st.markdown(f"**{weekday}**")
 
         # Entree selection (radio buttons)
-        selections[date_str] = st.radio(weekday, meal_data["entrees"], key=f"{username}_{date_str}")
+        selections[date_str] = st.radio("Choose an entree:", meal_data["entrees"], key=f"{username}_{date_str}")
 
         # Display sides below (not selectable), one per line
         if meal_data["sides"]:
