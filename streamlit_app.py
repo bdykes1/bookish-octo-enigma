@@ -25,16 +25,30 @@ def fetch_week_menu(year, month, day):
     return resp.json()
 
 def parse_menu(json_data):
-    """Extract a dict of {date: [food options]} from Nutrislice JSON."""
+    """
+    Extract a dict of {date: [food options]} from Nutrislice JSON.
+    Only include main and alternate lunch options (ignore sides).
+    Add 'Cold lunch' as an option for each day.
+    """
     meals_by_day = {}
     for day in json_data.get("days", []):
         date_str = day.get("date")  # 'YYYY-MM-DD'
-        items = []
+        options = []
+
         for item in day.get("menu_items", []):
             food = item.get("food")
-            if food and food.get("name"):
-                items.append(food["name"])
-        meals_by_day[date_str] = items
+            if not food or not food.get("name"):
+                continue
+
+            # Include only main or alternate lunches
+            category = item.get("category", "").lower()
+            if "main" in category or "alternate" in category:
+                options.append(food["name"])
+
+        # Always add Cold lunch option
+        options.append("Cold lunch")
+
+        meals_by_day[date_str] = options
     return meals_by_day
 
 def get_monday_of_week(date):
@@ -46,11 +60,11 @@ def get_monday_of_week(date):
 # -------------------------
 st.title("🍽 Echo Hill Lunch Picker")
 
-# Determine current week's Monday
-today = datetime.today()
-monday = get_monday_of_week(today)
+# Determine the date for Monday, August 25, 2025
+target_date = datetime(2025, 8, 25)
+monday = get_monday_of_week(target_date)
 
-# Fetch menu for current week
+# Fetch menu for the week of August 25, 2025
 try:
     menu_json = fetch_week_menu(monday.year, monday.month, monday.day)
     meals_by_day = parse_menu(menu_json)
@@ -58,8 +72,8 @@ except Exception as e:
     st.error(f"Could not fetch menu: {e}")
     st.stop()
 
-# Input: username
-username = st.text_input("Enter your name")
+# Input: username (selectable from the start)
+username = st.radio("Select your name:", ["Boston", "Cannon"])
 
 # Store selections in session
 if "all_users" not in st.session_state:
@@ -71,10 +85,7 @@ if username:
     selections = {}
     for date_str, options in meals_by_day.items():
         weekday = datetime.fromisoformat(date_str).strftime("%A %b %d")
-        if options:
-            selections[date_str] = st.radio(weekday, options, key=f"{username}_{date_str}")
-        else:
-            selections[date_str] = None
+        selections[date_str] = st.radio(weekday, options, key=f"{username}_{date_str}")
 
     if st.button("Save My Choices"):
         st.session_state.all_users[username] = selections
