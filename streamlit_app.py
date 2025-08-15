@@ -44,7 +44,7 @@ def parse_menu(json_data):
             category = item.get("category", "")
 
             # Case-insensitive check for entrees
-            if "main entree" in category.lower() or "alternate entree" in category.lower():
+            if "main entrée" in category.lower() or "alternate entrée" in category.lower():
                 entrees.append(food["name"])
             else:
                 sides.append(food["name"])
