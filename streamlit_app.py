@@ -66,7 +66,13 @@ def fetch_week_menu(year, month, day):
     return resp.json()
 
 def parse_menu(json_data):
+    """
+    Parses the Nutrislice API JSON and returns a dict of meals by day.
+    Entrées are determined using display_name and menu_item_type/category_id.
+    Sides are anything else.
+    """
     meals_by_day = {}
+
     for day in json_data.get("days", []):
         date_str = day.get("date")
         entrees, sides = [], []
@@ -76,14 +82,19 @@ def parse_menu(json_data):
             if not food or not food.get("name"):
                 continue
 
-            name = food["name"].strip()
-            category = (item.get("category") or "").lower()
+            # Prefer display_name if available
+            name = food.get("display_name", food["name"]).strip()
 
-            # Robust entrée detection
-            if any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
+            # Classify entree vs side
+            menu_type = (item.get("menu_item_type") or "").lower()
+            category = (item.get("category") or "").lower()
+            
+            # Consider as entree if menu_item_type or category indicates main/entree
+            if any(k in menu_type for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]) \
+               or any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
                 entrees.append(name)
-            # Fallback: category empty, and name doesn't match typical sides
-            elif category.strip() == "" and len(name) > 2 and not any(
+            # Fallback: treat items with empty type/category as entree if not obvious side
+            elif menu_type.strip() == "" and category.strip() == "" and not any(
                 s in name.lower() for s in ["fruit", "vegetable", "milk", "bread", "side"]
             ):
                 entrees.append(name)
@@ -92,6 +103,7 @@ def parse_menu(json_data):
 
         # Always add Cold Lunch
         entrees.append("Cold Lunch")
+
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
     return meals_by_day
