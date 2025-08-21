@@ -76,17 +76,21 @@ def parse_menu(json_data):
             if not food or not food.get("name"):
                 continue
 
+            name = food["name"].strip()
             category = (item.get("category") or "").lower()
-            name = food["name"]
 
             # Robust entrée detection
             if any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
                 entrees.append(name)
+            # Fallback: category empty, and name doesn't match typical sides
+            elif category.strip() == "" and len(name) > 2 and not any(
+                s in name.lower() for s in ["fruit", "vegetable", "milk", "bread", "side"]
+            ):
+                entrees.append(name)
             else:
                 sides.append(name)
 
-        if not entrees:
-            st.warning(f"⚠️ No entrées found for {date_str}, only showing Cold Lunch.")
+        # Always add Cold Lunch
         entrees.append("Cold Lunch")
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
