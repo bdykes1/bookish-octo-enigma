@@ -29,7 +29,6 @@ def load_gcal_service():
 
 def create_calendar_event(service, date_str, entree, username):
     """Create a calendar event from lunch selection"""
-
     # Set time slots
     if username == "Boston":
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
@@ -79,7 +78,9 @@ def parse_menu(json_data):
                 continue
 
             category = (item.get("category") or "").lower()
-            if "entrée" in category or "entree" in category or "main" in category or "alternate" in category:
+
+            # Flexible entrée detection
+            if any(keyword in category for keyword in ["entrée", "entree", "main", "alternate"]):
                 entrees.append(food["name"])
             else:
                 sides.append(food["name"])
@@ -100,24 +101,18 @@ def get_monday_of_week(date):
 # -------------------------
 st.title("🍽 Echo Hill Lunch Picker")
 
-# -------------------------
 # Dynamic week selection
-# -------------------------
 today = datetime.now()
 weekday = today.weekday()  # Monday=0 ... Sunday=6
-
-if weekday <= 2:  # Mon–Wed
+if weekday <= 2:  # Mon-Wed
     target_date = today
-else:  # Thu–Sun
-    target_date = today + timedelta(days=(7 - weekday))  # next Monday
-
+else:  # Thu-Sun
+    target_date = today + timedelta(days=(7 - weekday))
 monday = get_monday_of_week(target_date)
 week_str = monday.strftime("%b %d")
 st.subheader(f"Lunch selections for the week of {week_str}")
 
-# -------------------------
 # Fetch menu
-# -------------------------
 try:
     menu_json = fetch_week_menu(monday.year, monday.month, monday.day)
     meals_by_day = parse_menu(menu_json)
@@ -125,14 +120,11 @@ except Exception as e:
     st.error(f"Could not fetch menu: {e}")
     st.stop()
 
-# -------------------------
-# Kid selection using buttons
-# -------------------------
+# Kid selection buttons
 if "username" not in st.session_state:
     st.session_state.username = None
 
 st.write("### Select your name:")
-
 col1, col2 = st.columns(2)
 with col1:
     if st.button("👦 Boston"):
@@ -146,14 +138,16 @@ username = st.session_state.username
 if "all_users" not in st.session_state:
     st.session_state.all_users = {}
 
-# -------------------------
-# Lunch selections UI
-# -------------------------
+# Lunch selection UI (skip weekends)
 if username:
     st.subheader(f"Lunch selections for {username}")
     selections = {}
     for date_str, meal_data in meals_by_day.items():
-        weekday_label = datetime.fromisoformat(date_str).strftime("%A %b %d")
+        day_obj = datetime.fromisoformat(date_str)
+        if day_obj.weekday() >= 5:  # skip Saturday & Sunday
+            continue
+
+        weekday_label = day_obj.strftime("%A %b %d")
         st.markdown(f"**{weekday_label}**")
         selections[date_str] = st.radio(
             "Choose an entree:", meal_data["entrees"], key=f"{username}_{date_str}"
@@ -167,9 +161,7 @@ if username:
         st.session_state.all_users[username] = selections
         st.success("Choices saved!")
 
-# -------------------------
-# Display table and push to Google Calendar
-# -------------------------
+# Display table and Add to Calendar (skip weekends)
 if st.session_state.all_users:
     df = pd.DataFrame(st.session_state.all_users).T
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
@@ -181,6 +173,9 @@ if st.session_state.all_users:
             service = load_gcal_service()
             for user, choices in st.session_state.all_users.items():
                 for date_str, entree in choices.items():
+                    day_obj = datetime.fromisoformat(date_str)
+                    if day_obj.weekday() >= 5:  # skip weekends
+                        continue
                     create_calendar_event(service, date_str, entree, user)
             st.success("Events created in Google Calendar!")
         except Exception as e:
