@@ -29,7 +29,6 @@ def load_gcal_service():
 
 def create_calendar_event(service, date_str, entree, username):
     """Create a calendar event from lunch selection"""
-    # Set time slots
     if username == "Boston":
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
         end_time = start_time.replace(hour=12, minute=0)
@@ -78,16 +77,16 @@ def parse_menu(json_data):
                 continue
 
             category = (item.get("category") or "").lower()
+            name = food["name"]
 
-            # Flexible entrée detection
-            if any(keyword in category for keyword in ["entrée", "entree", "main", "alternate"]):
-                entrees.append(food["name"])
+            # Robust entrée detection
+            if any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
+                entrees.append(name)
             else:
-                sides.append(food["name"])
+                sides.append(name)
 
         if not entrees:
             st.warning(f"⚠️ No entrées found for {date_str}, only showing Cold Lunch.")
-
         entrees.append("Cold Lunch")
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
