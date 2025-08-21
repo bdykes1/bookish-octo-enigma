@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 DISTRICT = "linnmark12ia"
 SCHOOL = "echo-hill"
 MENU_TYPE = "lunch"
-CALENDAR_ID = "primary"  # or your school calendar email
+CALENDAR_ID = "449a3e735292d623fa0eec60e35d5f4b90c9dc5627c936cc94b4600056219d65@group.calendar.google.com"  # or your school calendar email
 
 # -------------------------
 # GOOGLE CALENDAR SETUP
