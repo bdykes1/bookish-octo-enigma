@@ -14,32 +14,37 @@ from googleapiclient.discovery import build
 DISTRICT = "linnmark12ia"
 SCHOOL = "echo-hill"
 MENU_TYPE = "lunch"
-CALENDAR_ID = "449a3e735292d623fa0eec60e35d5f4b90c9dc5627c936cc94b4600056219d65@group.calendar.google.com"  # or your school calendar email
+CALENDAR_ID = "449a3e735292d623fa0eec60e35d5f4b90c9dc5627c936cc94b4600056219d65@group.calendar.google.com"
 
 # -------------------------
 # GOOGLE CALENDAR SETUP
 # -------------------------
 @st.cache_resource
 def load_gcal_service():
-    # Load service account credentials from Streamlit secrets
     creds = service_account.Credentials.from_service_account_info(
         st.secrets["gcp_service_account"],
         scopes=["https://www.googleapis.com/auth/calendar"],
     )
     return build("calendar", "v3", credentials=creds)
 
-def create_calendar_event(service, date_str, entree, sides):
+def create_calendar_event(service, date_str, entree, username):
     """Create a calendar event from lunch selection"""
-    start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
-    end_time = start_time.replace(hour=12, minute=0)
 
-    if entree == "Cold Lunch":
-        description = "Cold Lunch"
+    # Set time slots
+    if username == "Boston":
+        start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
+        end_time = start_time.replace(hour=12, minute=0)
+    elif username == "Cannon":
+        start_time = datetime.fromisoformat(date_str).replace(hour=12, minute=0)
+        end_time = start_time.replace(hour=13, minute=0)
     else:
-        description = f"{entree}\n\nSides:\n" + "\n".join(sides)
+        start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
+        end_time = start_time.replace(hour=12, minute=0)
+
+    description = f"{username} – {entree}" if entree != "Cold Lunch" else f"{username} is bringing a Cold Lunch"
 
     event = {
-        "summary": f"Lunch: {entree}",
+        "summary": f"{username} – Lunch: {entree}",
         "description": description,
         "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
         "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
@@ -72,14 +77,19 @@ def parse_menu(json_data):
             food = item.get("food")
             if not food or not food.get("name"):
                 continue
-            category = item.get("category", "")
-            if "Main Entrée" in category or "Alternate Entrée" in category:
+
+            category = (item.get("category") or "").lower()
+            if "entrée" in category or "entree" in category or "main" in category or "alternate" in category:
                 entrees.append(food["name"])
             else:
                 sides.append(food["name"])
 
+        if not entrees:
+            st.warning(f"⚠️ No entrées found for {date_str}, only showing Cold Lunch.")
+
         entrees.append("Cold Lunch")
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
+
     return meals_by_day
 
 def get_monday_of_week(date):
@@ -90,9 +100,24 @@ def get_monday_of_week(date):
 # -------------------------
 st.title("🍽 Echo Hill Lunch Picker")
 
-target_date = datetime(2025, 8, 25)
-monday = get_monday_of_week(target_date)
+# -------------------------
+# Dynamic week selection
+# -------------------------
+today = datetime.now()
+weekday = today.weekday()  # Monday=0 ... Sunday=6
 
+if weekday <= 2:  # Mon–Wed
+    target_date = today
+else:  # Thu–Sun
+    target_date = today + timedelta(days=(7 - weekday))  # next Monday
+
+monday = get_monday_of_week(target_date)
+week_str = monday.strftime("%b %d")
+st.subheader(f"Lunch selections for the week of {week_str}")
+
+# -------------------------
+# Fetch menu
+# -------------------------
 try:
     menu_json = fetch_week_menu(monday.year, monday.month, monday.day)
     meals_by_day = parse_menu(menu_json)
@@ -100,17 +125,36 @@ except Exception as e:
     st.error(f"Could not fetch menu: {e}")
     st.stop()
 
-username = st.radio("Select your name:", ["Boston", "Cannon"])
+# -------------------------
+# Kid selection using buttons
+# -------------------------
+if "username" not in st.session_state:
+    st.session_state.username = None
+
+st.write("### Select your name:")
+
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("👦 Boston"):
+        st.session_state.username = "Boston"
+with col2:
+    if st.button("🧒 Cannon"):
+        st.session_state.username = "Cannon"
+
+username = st.session_state.username
 
 if "all_users" not in st.session_state:
     st.session_state.all_users = {}
 
+# -------------------------
+# Lunch selections UI
+# -------------------------
 if username:
     st.subheader(f"Lunch selections for {username}")
     selections = {}
     for date_str, meal_data in meals_by_day.items():
-        weekday = datetime.fromisoformat(date_str).strftime("%A %b %d")
-        st.markdown(f"**{weekday}**")
+        weekday_label = datetime.fromisoformat(date_str).strftime("%A %b %d")
+        st.markdown(f"**{weekday_label}**")
         selections[date_str] = st.radio(
             "Choose an entree:", meal_data["entrees"], key=f"{username}_{date_str}"
         )
@@ -119,24 +163,25 @@ if username:
             for side in meal_data["sides"]:
                 st.text(f"- {side}")
 
-    if st.button("Save My Choices"):
+    if st.button("Review Choices"):
         st.session_state.all_users[username] = selections
         st.success("Choices saved!")
 
-# Display and push to calendar
+# -------------------------
+# Display table and push to Google Calendar
+# -------------------------
 if st.session_state.all_users:
     df = pd.DataFrame(st.session_state.all_users).T
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
     st.subheader("📊 All Selections")
     st.table(df)
 
-    if st.button("📅 Push to Google Calendar"):
+    if st.button("Add to Calendar"):
         try:
             service = load_gcal_service()
             for user, choices in st.session_state.all_users.items():
                 for date_str, entree in choices.items():
-                    sides = meals_by_day[date_str]["sides"]
-                    create_calendar_event(service, date_str, entree, sides)
+                    create_calendar_event(service, date_str, entree, user)
             st.success("Events created in Google Calendar!")
         except Exception as e:
             st.error(f"Calendar error: {e}")
