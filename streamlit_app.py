@@ -209,9 +209,22 @@ if username:
     # Display table for current child
     df = pd.DataFrame(st.session_state.all_users).T
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
-    st.subheader("📊 Your Selections")
-    st.table(df)
+st.subheader("📊 Your Selections")
 
+# Format column headers and enable word wrapping
+styled_df = st.dataframe(
+    df,
+    use_container_width=True,
+    height=250,
+    column_config={
+        col: st.column_config.TextColumn(
+            label=f"**{col}**",
+            width="medium",
+            help="Lunch choice for this day"
+        )
+        for col in df.columns
+    }
+)
     # Add to Calendar button
     if st.button("Add to Calendar"):
         try:
