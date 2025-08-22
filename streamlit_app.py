@@ -1,4 +1,3 @@
-# lunch_picker.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -28,6 +27,7 @@ def load_gcal_service():
     return build("calendar", "v3", credentials=creds)
 
 def upsert_calendar_event(service, date_str, entree, username):
+    # Set event time based on username
     if username == "Boston":
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
         end_time = start_time.replace(hour=12, minute=0)
@@ -40,35 +40,30 @@ def upsert_calendar_event(service, date_str, entree, username):
 
     description = f"{username} – {entree}" if entree != "Cold Lunch" else f"{username} is bringing a Cold Lunch"
 
+    # Step 1: Find all events for this user on this date
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
-        timeMin=start_time.isoformat() + "Z",
-        timeMax=end_time.isoformat() + "Z",
-        q=username,
+        timeMin=start_time.date().isoformat() + "T00:00:00Z",
+        timeMax=start_time.date().isoformat() + "T23:59:59Z",
         singleEvents=True,
         orderBy="startTime"
     ).execute()
 
     events = events_result.get("items", [])
 
-    if events:
-        event = events[0]
-        event["summary"] = f"{username} – Lunch: {entree}"
-        event["description"] = description
-        event["start"]["dateTime"] = start_time.isoformat()
-        event["end"]["dateTime"] = end_time.isoformat()
-        service.events().update(calendarId=CALENDAR_ID, eventId=event["id"], body=event).execute()
+    # Step 2: Delete any events that match the username and date
+    for event in events:
+        if username in event.get("summary", ""):
+            service.events().delete(calendarId=CALENDAR_ID, eventId=event["id"]).execute()
 
-        for extra in events[1:]:
-            service.events().delete(calendarId=CALENDAR_ID, eventId=extra["id"]).execute()
-    else:
-        event = {
-            "summary": f"{username} – Lunch: {entree}",
-            "description": description,
-            "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
-            "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
-        }
-        service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    # Step 3: Insert the new event
+    new_event = {
+        "summary": f"{username} – Lunch: {entree}",
+        "description": description,
+        "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
+        "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
+    }
+    service.events().insert(calendarId=CALENDAR_ID, body=new_event).execute()
 
 # -------------------------
 # NUTRISLICE HELPERS
