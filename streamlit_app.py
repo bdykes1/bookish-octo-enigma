@@ -93,8 +93,7 @@ def fetch_week_menu(year, month, day):
 def parse_menu(json_data):
     """
     Parses the Nutrislice API JSON.
-    - 'entrees': includes both Main Entrée and Alternate Entrée choices
-    - 'sides': listed separately, not selectable
+    - Treats all items as entrées unless their category is explicitly 'side'
     """
     meals_by_day = {}
 
@@ -108,22 +107,18 @@ def parse_menu(json_data):
                 continue
 
             name = food.get("display_name", food["name"]).strip()
-            menu_type = (item.get("menu_item_type") or "").lower()
             category = (item.get("category") or "").lower()
 
-            # Include Main Entrée and Alternate Entrée
-            if any(k in menu_type for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]) \
-               or any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
-                entrees.append(name)
-            else:
+            if category == "side":
                 sides.append(name)
+            else:
+                entrees.append(name)
 
         # Always add Cold Lunch as an option
         entrees.append("Cold Lunch")
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
     return meals_by_day
-
 
 def get_monday_of_week(date):
     return date - timedelta(days=date.weekday())
