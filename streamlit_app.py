@@ -27,8 +27,12 @@ def load_gcal_service():
     )
     return build("calendar", "v3", credentials=creds)
 
-def create_calendar_event(service, date_str, entree, username):
-    """Create a calendar event from lunch selection"""
+
+def create_or_update_calendar_event(service, date_str, entree, username):
+    """Create or update a calendar event for a given user and date.
+    If multiple exist, update one and delete extras."""
+    
+    # Pick start/end times by user
     if username == "Boston":
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
         end_time = start_time.replace(hour=12, minute=0)
@@ -39,16 +43,62 @@ def create_calendar_event(service, date_str, entree, username):
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
         end_time = start_time.replace(hour=12, minute=0)
 
-    description = f"{username} – {entree}" if entree != "Cold Lunch" else f"{username} is bringing a Cold Lunch"
+    description = (
+        f"{username} – {entree}"
+        if entree != "Cold Lunch"
+        else f"{username} is bringing a Cold Lunch"
+    )
 
-    event = {
+    event_body = {
         "summary": f"{username} – Lunch: {entree}",
         "description": description,
         "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
         "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
     }
 
-    return service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+    # Search for events on that date (expand to whole day just in case)
+    day_start = datetime.fromisoformat(date_str).replace(hour=0, minute=0, second=0)
+    day_end = day_start.replace(hour=23, minute=59, second=59)
+
+    events_result = service.events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=day_start.isoformat() + "Z",
+        timeMax=day_end.isoformat() + "Z",
+        singleEvents=True,
+        orderBy="startTime"
+    ).execute()
+
+    events = events_result.get("items", [])
+
+    # Filter for this user's lunch events
+    user_events = [
+        ev for ev in events
+        if ev.get("summary", "").startswith(f"{username} – Lunch")
+    ]
+
+    if user_events:
+        # Update the first event
+        main_event = user_events[0]
+        updated_event = service.events().update(
+            calendarId=CALENDAR_ID,
+            eventId=main_event["id"],
+            body=event_body
+        ).execute()
+
+        # Delete duplicates
+        for extra in user_events[1:]:
+            service.events().delete(
+                calendarId=CALENDAR_ID,
+                eventId=extra["id"]
+            ).execute()
+
+        return updated_event
+    else:
+        # No event exists, create one
+        return service.events().insert(
+            calendarId=CALENDAR_ID,
+            body=event_body
+        ).execute()
 
 # -------------------------
 # NUTRISLICE HELPERS
@@ -89,11 +139,9 @@ def parse_menu(json_data):
             menu_type = (item.get("menu_item_type") or "").lower()
             category = (item.get("category") or "").lower()
             
-            # Consider as entree if menu_item_type or category indicates main/entree
             if any(k in menu_type for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]) \
                or any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
                 entrees.append(name)
-            # Fallback: treat items with empty type/category as entree if not obvious side
             elif menu_type.strip() == "" and category.strip() == "" and not any(
                 s in name.lower() for s in ["fruit", "vegetable", "milk", "bread", "side"]
             ):
@@ -153,45 +201,56 @@ username = st.session_state.username
 if "all_users" not in st.session_state:
     st.session_state.all_users = {}
 
-# Lunch selection UI (skip weekends)
+# Lunch selection + table (Mon–Fri only, scoped to current child)
 if username:
     st.subheader(f"Lunch selections for {username}")
     selections = {}
-    for date_str, meal_data in meals_by_day.items():
-        day_obj = datetime.fromisoformat(date_str)
-        if day_obj.weekday() >= 5:  # skip Saturday & Sunday
-            continue
+
+    # Build Monday–Friday range from the chosen week
+    week_days = [monday + timedelta(days=i) for i in range(5)]  # Mon–Fri
+
+    for day_obj in week_days:
+        date_str = day_obj.date().isoformat()
+        meal_data = meals_by_day.get(date_str, {"entrees": ["Cold Lunch"], "sides": []})
 
         weekday_label = day_obj.strftime("%A %b %d")
         st.markdown(f"**{weekday_label}**")
+
         selections[date_str] = st.radio(
-            "Choose an entree:", meal_data["entrees"], key=f"{username}_{date_str}"
+            "Choose an entree:",
+            meal_data["entrees"],
+            key=f"{username}_{date_str}"
         )
+
         if meal_data["sides"]:
             st.markdown("**Sides:**")
             for side in meal_data["sides"]:
                 st.text(f"- {side}")
 
-    if st.button("Review Choices"):
-        st.session_state.all_users[username] = selections
-        st.success("Choices saved!")
+    # Save selections immediately
+    st.session_state.all_users[username] = selections
 
-# Display table and Add to Calendar (skip weekends)
-if st.session_state.all_users:
-    df = pd.DataFrame(st.session_state.all_users).T
-    df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
-    st.subheader("📊 All Selections")
+    # --- Table for this child's choices only ---
+    day_keys = [d.date().isoformat() for d in week_days]
+    col_labels = [d.strftime("%a %b %d") for d in week_days]
+
+    user_choices = st.session_state.all_users.get(username, {})
+    df = pd.DataFrame([user_choices], index=[username])
+    df = df.reindex(columns=day_keys)
+    df.columns = col_labels
+
+    st.subheader(f"📊 {username}'s Selections")
     st.table(df)
 
-    if st.button("Add to Calendar"):
-        try:
-            service = load_gcal_service()
-            for user, choices in st.session_state.all_users.items():
-                for date_str, entree in choices.items():
-                    day_obj = datetime.fromisoformat(date_str)
-                    if day_obj.weekday() >= 5:  # skip weekends
-                        continue
-                    create_calendar_event(service, date_str, entree, user)
-            st.success("Events created in Google Calendar!")
-        except Exception as e:
-            st.error(f"Calendar error: {e}")
+    # Add to Calendar button (only if at least one choice)
+    if any(user_choices.values()):
+        if st.button("Add to Calendar"):
+            try:
+                service = load_gcal_service()
+                for date_str in day_keys:  # Only Mon–Fri
+                    entree = user_choices.get(date_str)
+                    if entree:  # only add if they selected something
+                        create_or_update_calendar_event(service, date_str, entree, username)
+                st.success(f"{username}'s events created/updated in Google Calendar!")
+            except Exception as e:
+                st.error(f"Calendar error: {e}")
