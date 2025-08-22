@@ -193,7 +193,6 @@ if username:
     st.dataframe(
         df,
         use_container_width=True,
-        height=250,
         column_config={
             col: st.column_config.TextColumn(
                 label=f"**{col}**",
