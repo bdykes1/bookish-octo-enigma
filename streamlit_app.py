@@ -41,7 +41,7 @@ def upsert_calendar_event(service, date_str, entree, username):
 
     description = f"{username} – {entree}" if entree != "Cold Lunch" else f"{username} is bringing a Cold Lunch"
 
-    # Look for existing events for this user on this date
+    # Search for existing events
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=start_time.isoformat() + "Z",
@@ -62,7 +62,7 @@ def upsert_calendar_event(service, date_str, entree, username):
         event["end"]["dateTime"] = end_time.isoformat()
         service.events().update(calendarId=CALENDAR_ID, eventId=event["id"], body=event).execute()
 
-        # Delete extras
+        # Delete duplicates
         for extra in events[1:]:
             service.events().delete(calendarId=CALENDAR_ID, eventId=extra["id"]).execute()
     else:
@@ -92,9 +92,9 @@ def fetch_week_menu(year, month, day):
 
 def parse_menu(json_data):
     """
-    Returns a dict of meals by day:
-      - 'entrees': only selectable main dishes
-      - 'sides': listed but not selectable
+    Parses the Nutrislice API JSON.
+    - 'entrees': selectable main dishes only
+    - 'sides': listed separately, not selectable
     """
     meals_by_day = {}
 
@@ -111,16 +111,14 @@ def parse_menu(json_data):
             menu_type = (item.get("menu_item_type") or "").lower()
             category = (item.get("category") or "").lower()
 
-            # Explicitly identify entrees
+            # Identify entrees explicitly
             if any(k in menu_type for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]) \
                or any(k in category for k in ["main", "entree", "entrée", "alternate", "chef", "dish"]):
                 entrees.append(name)
             else:
                 sides.append(name)
 
-        # Always add Cold Lunch as an option
         entrees.append("Cold Lunch")
-
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
     return meals_by_day
@@ -152,7 +150,7 @@ except Exception as e:
     st.error(f"Could not fetch menu: {e}")
     st.stop()
 
-# Kid selection buttons + photos
+# Kid selection buttons
 if "username" not in st.session_state:
     st.session_state.username = None
 
@@ -161,36 +159,36 @@ col1, col2 = st.columns(2)
 with col1:
     if st.button("👦 Boston"):
         st.session_state.username = "Boston"
-    st.image("images/boston.png", caption="Boston", use_column_width=True)
 with col2:
     if st.button("🧒 Cannon"):
         st.session_state.username = "Cannon"
-    st.image("images/cannon.png", caption="Cannon", use_column_width=True)
 
 username = st.session_state.username
 
 if username:
     st.subheader(f"Lunch selections for {username}")
     selections = {}
-    for date_str, meal_data in meals_by_day.items():
-        day_obj = datetime.fromisoformat(date_str)
-        if day_obj.weekday() >= 5:  # skip Sat & Sun
-            continue
+    # Only Mon–Fri
+    week_days = [monday + timedelta(days=i) for i in range(5)]
+    for day_obj in week_days:
+        date_str = day_obj.date().isoformat()
+        meal_data = meals_by_day.get(date_str, {"entrees": ["Cold Lunch"], "sides": []})
 
-        weekday_label = day_obj.strftime("%A %b %d")
-        st.markdown(f"**{weekday_label}**")
+        st.markdown(f"**{day_obj.strftime('%A %b %d')}**")
         selections[date_str] = st.radio(
-            "Choose an entree:", meal_data["entrees"], key=f"{username}_{date_str}"
+            "Choose an entree:",
+            meal_data["entrees"],
+            key=f"{username}_{date_str}"
         )
         if meal_data["sides"]:
             st.markdown("**Sides:**")
             for side in meal_data["sides"]:
                 st.text(f"- {side}")
 
-    # Store selections automatically for each child
+    # Save selections
     st.session_state.all_users = {username: selections}
 
-    # Display only this child's table
+    # Display table for current child
     df = pd.DataFrame(st.session_state.all_users).T
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
     st.subheader("📊 Your Selections")
@@ -201,9 +199,6 @@ if username:
         try:
             service = load_gcal_service()
             for date_str, entree in selections.items():
-                day_obj = datetime.fromisoformat(date_str)
-                if day_obj.weekday() >= 5:
-                    continue
                 upsert_calendar_event(service, date_str, entree, username)
             st.success("Events synced with Google Calendar!")
         except Exception as e:
