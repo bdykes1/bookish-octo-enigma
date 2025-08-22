@@ -189,6 +189,9 @@ if username:
     df = pd.DataFrame(st.session_state.all_users).T
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
 
+    # Auto-wrap long entrée names
+    df = df.applymap(lambda x: x if len(x) < 40 else x[:37] + "...")
+
     st.subheader("📊 Your Selections")
     st.dataframe(
         df,
@@ -196,7 +199,7 @@ if username:
         column_config={
             col: st.column_config.TextColumn(
                 label=f"**{col}**",
-                width="medium",
+                width="large",
                 help="Lunch choice for this day"
             )
             for col in df.columns
