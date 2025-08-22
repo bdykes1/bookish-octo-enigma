@@ -1,203 +1,58 @@
-# lunch_picker.py
-import streamlit as st
-import requests
-import pandas as pd
 from datetime import datetime, timedelta
-
-# Google Calendar imports
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# -------------------------
-# CONFIG
-# -------------------------
-DISTRICT = "linnmark12ia"
-SCHOOL = "echo-hill"
-MENU_TYPE = "lunch"
-CALENDAR_ID = "449a3e735292d623fa0eec60e35d5f4b90c9dc5627c936cc94b4600056219d65@group.calendar.google.com"
+# Replace with your actual calendar ID and credentials file
+CALENDAR_ID = "your_calendar_id_here"
+SERVICE_ACCOUNT_FILE = "credentials.json"
 
-# -------------------------
-# GOOGLE CALENDAR SETUP
-# -------------------------
-@st.cache_resource
-def load_gcal_service():
-    creds = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/calendar"],
+def get_calendar_service():
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=["https://www.googleapis.com/auth/calendar"]
     )
-    return build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=credentials)
+    return service
 
-def upsert_calendar_event(service, date_str, entree, username):
-    if username == "Boston":
-        start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
-        end_time = start_time.replace(hour=12, minute=0)
-    elif username == "Cannon":
-        start_time = datetime.fromisoformat(date_str).replace(hour=12, minute=0)
-        end_time = start_time.replace(hour=13, minute=0)
-    else:
-        start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
-        end_time = start_time.replace(hour=12, minute=0)
+def upsert_calendar_event(username, lunch_text, date_str):
+    service = get_calendar_service()
 
-    description = f"{username} – {entree}" if entree != "Cold Lunch" else f"{username} is bringing a Cold Lunch"
+    # Parse date and set time window
+    date = datetime.strptime(date_str, "%Y-%m-%d")
+    start_time = datetime(date.year, date.month, date.day, 11, 0)
+    end_time = datetime(date.year, date.month, date.day, 13, 0)
 
+    # Search for existing lunch event with exact summary match
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=start_time.isoformat() + "Z",
         timeMax=end_time.isoformat() + "Z",
-        q=username,
         singleEvents=True,
         orderBy="startTime"
     ).execute()
 
-    events = events_result.get("items", [])
+    events = [
+        e for e in events_result.get("items", [])
+        if e.get("summary", "").startswith(f"{username} – Lunch:")
+    ]
+
+    event_body = {
+        "summary": f"{username} – Lunch: {lunch_text}",
+        "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
+        "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
+    }
 
     if events:
-        event = events[0]
-        event["summary"] = f"{username} – Lunch: {entree}"
-        event["description"] = description
-        event["start"]["dateTime"] = start_time.isoformat()
-        event["end"]["dateTime"] = end_time.isoformat()
-        service.events().update(calendarId=CALENDAR_ID, eventId=event["id"], body=event).execute()
-
-        for extra in events[1:]:
-            service.events().delete(calendarId=CALENDAR_ID, eventId=extra["id"]).execute()
+        # Update the first matching event
+        event_id = events[0]["id"]
+        service.events().update(
+            calendarId=CALENDAR_ID,
+            eventId=event_id,
+            body=event_body
+        ).execute()
     else:
-        event = {
-            "summary": f"{username} – Lunch: {entree}",
-            "description": description,
-            "start": {"dateTime": start_time.isoformat(), "timeZone": "America/Chicago"},
-            "end": {"dateTime": end_time.isoformat(), "timeZone": "America/Chicago"},
-        }
-        service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-
-# -------------------------
-# NUTRISLICE HELPERS
-# -------------------------
-def build_api_url(year, month, day):
-    return (
-        f"https://{DISTRICT}.api.nutrislice.com/menu/api/weeks/school/"
-        f"{SCHOOL}/menu-type/{MENU_TYPE}/{year}/{month:02d}/{day:02d}/"
-    )
-
-def fetch_week_menu(year, month, day):
-    url = build_api_url(year, month, day)
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return resp.json()
-
-def parse_menu(json_data):
-    EXCLUDED_CATEGORIES = {
-        "milk variety", "fruit", "vegetable", "condiment", "side",
-        "daily milk options", "fresh vegetables", "condiments"
-    }
-    EXCLUDED_KEYWORDS = {
-        "milk", "fruit", "vegetable", "ketchup", "mustard", "mayo",
-        "dressing", "syrup", "juice", "condiment", "graham", "crackers",
-        "chocolate chip cookie", "applesauce cup", "steamed broccoli",
-        "broccoli florets", "smokies (25)", "cucumber coins",
-        "red & green pepper strips", "yogurt variety", "fresh strawberries",
-        "baked beans", "peach slices", "cauliflower florets",
-        "garden salad w/ tomatoes", "celery sticks", "baby carrots", "tater tots (25)"
-    }
-
-    meals_by_day = {}
-
-    for day in json_data.get("days", []):
-        date_str = day.get("date")
-        entrees, sides = [], []
-
-        for item in day.get("menu_items", []):
-            food = item.get("food")
-            if not food or not food.get("name"):
-                continue
-
-            name = food.get("display_name", food["name"]).strip()
-            category = (item.get("category") or "").lower()
-
-            if category in EXCLUDED_CATEGORIES or any(kw in name.lower() for kw in EXCLUDED_KEYWORDS):
-                continue
-
-            if category == "side":
-                sides.append(name)
-            else:
-                entrees.append(name)
-
-        entrees.append("Cold Lunch")
-        meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
-
-    return meals_by_day
-
-def get_monday_of_week(date):
-    return date - timedelta(days=date.weekday())
-
-# -------------------------
-# STREAMLIT UI
-# -------------------------
-st.title("🍽 Echo Hill Lunch Picker")
-
-today = datetime.now()
-weekday = today.weekday()
-target_date = today if weekday <= 2 else today + timedelta(days=(7 - weekday))
-monday = get_monday_of_week(target_date)
-week_str = monday.strftime("%b %d")
-st.subheader(f"Lunch selections for the week of {week_str}")
-
-try:
-    menu_json = fetch_week_menu(monday.year, monday.month, monday.day)
-    meals_by_day = parse_menu(menu_json)
-except Exception as e:
-    st.error(f"Could not fetch menu: {e}")
-    st.stop()
-
-if "username" not in st.session_state:
-    st.session_state.username = None
-
-st.write("### Select your name:")
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("👦 Boston"):
-        st.session_state.username = "Boston"
-with col2:
-    if st.button("🧒 Cannon"):
-        st.session_state.username = "Cannon"
-
-username = st.session_state.username
-
-if username:
-    st.subheader(f"Lunch selections for {username}")
-    selections = {}
-    week_days = [monday + timedelta(days=i) for i in range(5)]
-    for day_obj in week_days:
-        date_str = day_obj.date().isoformat()
-        meal_data = meals_by_day.get(date_str, {"entrees": ["Cold Lunch"], "sides": []})
-
-        st.markdown(f"**{day_obj.strftime('%A %b %d')}**")
-        selections[date_str] = st.radio(
-            "Choose an entree:",
-            meal_data["entrees"],
-            key=f"{username}_{date_str}"
-        )
-        if meal_data["sides"]:
-            st.markdown("**Sides:**")
-            for side in meal_data["sides"]:
-                st.text(f"- {side}")
-
-    # Save selections
-    st.session_state.all_users = {username: selections}
-
-    # Display table for current child
-    df = pd.DataFrame(st.session_state.all_users).T
-    df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
-
-    st.subheader("📊 Your Selections")
-    st.table(df)
-
-    # Add to Calendar button
-    if st.button("Add to Calendar"):
-        try:
-            service = load_gcal_service()
-            for date_str, entree in selections.items():
-                upsert_calendar_event(service, date_str, entree, username)
-            st.success("Events synced with Google Calendar!")
-        except Exception as e:
-            st.error(f"Calendar error: {e}")
+        # Create new event
+        service.events().insert(
+            calendarId=CALENDAR_ID,
+            body=event_body
+        ).execute()
