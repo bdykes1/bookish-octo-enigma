@@ -104,7 +104,8 @@ def parse_menu(json_data):
         "milk", "fruit", "vegetable", "ketchup", "mustard", "mayo",
         "dressing", "syrup", "juice", "condiment", "graham", "crackers",
         "chocolate chip cookie", "applesauce cup", "steamed broccoli",
-        "cucumber coins","red and green pepper strips", "yogurt variety",
+        "broccoli florets", "smokies (25)",
+        "cucumber coins","red & green pepper strips", "yogurt variety",
         "fresh strawberries", "baked beans", "peach slices", "cauliflower florets",
         "garden salad w/ tomatoes", "celery sticks", "baby carrots", "tater tots (25)"
     }
