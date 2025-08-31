@@ -27,6 +27,10 @@ def load_gcal_service():
     return build("calendar", "v3", credentials=creds)
 
 def upsert_calendar_event(service, date_str, entree, username):
+    # Skip if no entree (No school)
+    if not entree:
+        return
+
     # Set event time based on username
     if username == "Boston":
         start_time = datetime.fromisoformat(date_str).replace(hour=11, minute=0)
@@ -92,7 +96,9 @@ def parse_menu(json_data):
         "broccoli florets", "smokies (25)", "cucumber coins",
         "red & green pepper strips", "yogurt variety", "fresh strawberries",
         "baked beans", "peach slices", "cauliflower florets",
-        "garden salad w/ tomatoes", "celery sticks", "baby carrots", "tater tots (25)"
+        "garden salad w/ tomatoes", "celery sticks", "baby carrots", "tater tots (25)",
+        "mixed berry cup", "orange slices", "steamed corn", "fresh kiwi", "grapes",
+        "baked french fries"
     }
 
     meals_by_day = {}
@@ -117,7 +123,10 @@ def parse_menu(json_data):
             else:
                 entrees.append(name)
 
-        entrees.append("Cold Lunch")
+        # Only add Cold Lunch if there are actual entrees
+        if entrees:
+            entrees.append("Cold Lunch")
+
         meals_by_day[date_str] = {"entrees": entrees, "sides": sides}
 
     return meals_by_day
@@ -164,35 +173,47 @@ if username:
     week_days = [monday + timedelta(days=i) for i in range(5)]
     for day_obj in week_days:
         date_str = day_obj.date().isoformat()
-        meal_data = meals_by_day.get(date_str, {"entrees": ["Cold Lunch"], "sides": []})
+        meal_data = meals_by_day.get(date_str, {"entrees": [], "sides": []})
 
         st.markdown(f"**{day_obj.strftime('%A %b %d')}**")
-        selections[date_str] = st.radio(
-            "Choose an entree:",
-            meal_data["entrees"],
-            key=f"{username}_{date_str}"
-        )
-        if meal_data["sides"]:
-            st.markdown("**Sides:**")
-            for side in meal_data["sides"]:
-                st.text(f"- {side}")
+
+        if not meal_data["entrees"]:
+            # No meals available = No school
+            st.info("No school")
+            selections[date_str] = None
+        else:
+            selections[date_str] = st.radio(
+                "Choose an entree:",
+                meal_data["entrees"],
+                key=f"{username}_{date_str}",
+                index=None  # 👈 prevents default selection
+            )
+            if meal_data["sides"]:
+                st.markdown("**Sides:**")
+                for side in meal_data["sides"]:
+                    st.text(f"- {side}")
 
     # Save selections
     st.session_state.all_users = {username: selections}
 
-    # Display table for current child
+    # Display table for current child (replace None with "No school")
     df = pd.DataFrame(st.session_state.all_users).T
+    df = df.fillna("No school")
     df.columns = [datetime.fromisoformat(c).strftime("%a %b %d") for c in df.columns]
 
     st.subheader("📊 Your Selections")
     st.table(df)
 
-    # Add to Calendar button
-    if st.button("Add to Calendar"):
-        try:
-            service = load_gcal_service()
-            for date_str, entree in selections.items():
-                upsert_calendar_event(service, date_str, entree, username)
-            st.success("Events synced with Google Calendar!")
-        except Exception as e:
-            st.error(f"Calendar error: {e}")
+    # Only show Add to Calendar button if at least one day has a selection
+    if any(entree for entree in selections.values()):
+        if st.button("Add to Calendar"):
+            try:
+                service = load_gcal_service()
+                for date_str, entree in selections.items():
+                    if entree:  # Skip No school
+                        upsert_calendar_event(service, date_str, entree, username)
+                st.success("Events synced with Google Calendar!")
+            except Exception as e:
+                st.error(f"Calendar error: {e}")
+    else:
+        st.info("No school this week — nothing to add to the calendar.")
